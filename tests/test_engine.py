@@ -1,11 +1,8 @@
+from helpers import section
+
 from rag_engine.assistant import replies
 from rag_engine.assistant.engine import Engine
-from rag_engine.models import Action, Decision, Hit, Intent
-
-
-def section(heading: str, body: str, distance: float) -> Hit:
-    return Hit("doc.md", heading, f"Doc > {heading}\n\n{body}", distance)
-
+from rag_engine.models import Action, Decision, Intent
 
 FEE = section("How much is the fee?", "The ACO fee is $25 CAD, paid after delivery.", 0.2)
 CARDS = section("Can I use a Vault card?", "No. Vault or Venn cards are not accepted.", 0.25)
@@ -74,7 +71,7 @@ def test_wording_that_flips_the_documented_no_falls_back_to_the_section():
 
 
 def test_unverified_answer_is_never_shown_and_goes_to_staff():
-    # The bug this design fixes: the model invents an answer the docs do not contain.
+    # The model invents an answer the docs do not contain.
     invented = "Yes, you can use the same card on every profile."
     r = make([CARDS], d(Intent.QUESTION, Action.ANSWER, invented)).respond("same card twice?")
     assert r.action is Action.HANDOFF and r.reply == replies.NO_ANSWER
@@ -151,7 +148,6 @@ def test_vague_question_gets_the_models_own_question():
 
 
 def test_vague_question_is_asked_about_not_answered_with_whatever_the_judge_accepts():
-    # Measured: "it's not working" was answered with "A decline can show up twice in the reports".
     e = make([FEE], d(Intent.QUESTION, Action.CLARIFY, "What isn't working?"), judge=boom)
     r = e.respond("it's not working")
     assert r.action is Action.CLARIFY and r.reply == "What isn't working?"
@@ -251,7 +247,7 @@ COSTCO_TIPS = section(
     "What are the requirements for Costco Canada ACO?", "A membership is needed.", 0.328
 )
 FEES_GENERAL = section("How do ACO fees work?", "The ACO fee is paid after delivery.", 0.2)
-# Farther than the Walmart section, as measured for "how much is the aco fee in general".
+# Farther than the Walmart section, as real retrieval ranks them for a general fee question.
 FEES_OVERVIEW = section(
     "How much is the ACO fee in general?",
     "Walmart items cost $2.50 to $5, and Amazon fees are set after the drop.",
@@ -260,14 +256,13 @@ FEES_OVERVIEW = section(
 
 
 def fee_search(query):
-    """Stands in for retrieval as measured: a named retailer's fee section comes first."""
+    """Stands in for retrieval: a named retailer's fee section comes first."""
     if "costco" in query:
         return [COSTCO_FEE, WALMART_FEE] if "fee" in query else [COSTCO_TIPS]
     return [WALMART_FEE, AMAZON_FEE]
 
 
 def test_answer_that_varies_by_retailer_is_summarised_not_asked_about():
-    # Reported: "how much is the aco fee" got a hard-coded "which retailer?" question.
     hits = [WALMART_FEE, FEES_OVERVIEW, AMAZON_FEE]
     e = make(hits, d(Intent.QUESTION, Action.ANSWER, "x"), judge=quotes_whole_section)
     r = e.respond("how much is the aco fee")
@@ -294,14 +289,12 @@ def test_general_section_closest_is_answered_without_asking():
 
 
 def test_in_general_is_answered_from_the_summary_section():
-    # Measured: the Walmart fee section was closer than the general one and got verified.
     hits = [WALMART_FEE, FEES_OVERVIEW, COSTCO_TIPS]
     e = make(hits, d(Intent.QUESTION, Action.ANSWER, "x"), judge=quotes_whole_section)
     assert e.respond("what are the fees in general?").source == FEES_OVERVIEW
 
 
 def test_in_general_after_an_answer_re_asks_that_question():
-    # Reported: "in general" after an answer was searched on its own and got profile rules.
     queries = []
     e = Engine(
         summarizer=no_summary,
@@ -315,7 +308,6 @@ def test_in_general_after_an_answer_re_asks_that_question():
 
 
 def test_follow_up_is_a_question_whatever_the_model_labels_it():
-    # Measured: "what about costco?" after a Walmart fee answer was labelled a request.
     decisions = [
         d(Intent.QUESTION, Action.ANSWER, "x"),
         d(Intent.REQUEST, Action.HANDOFF, "Staff will help"),
@@ -332,7 +324,6 @@ def test_follow_up_is_a_question_whatever_the_model_labels_it():
 
 
 def test_follow_up_naming_another_retailer_re_asks_the_last_question():
-    # Reported: "what about for costco" after a Walmart fee answer got Costco's requirements.
     e = Engine(
         summarizer=no_summary,
         retriever=fee_search,

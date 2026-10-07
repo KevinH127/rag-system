@@ -1,3 +1,5 @@
+"""The system prompt for llm.decide, with the retrieved sections as its context."""
+
 from rag_engine.models import Hit
 
 SYSTEM = """You are the customer-support assistant for Trevona ACO, a managed checkout service \

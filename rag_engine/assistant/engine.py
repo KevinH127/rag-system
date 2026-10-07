@@ -1,3 +1,5 @@
+"""One customer conversation: its state, and the pipeline every message goes through."""
+
 import logging
 import time
 from collections.abc import Callable, Iterator
@@ -130,10 +132,9 @@ class Engine:
         with _timed(timings, "decide"):
             decision = self.decider(system, self.history)
         checks: list[Check] = []
+        is_question = policy.intent_of(turn, decision) is Intent.QUESTION
         # Nothing to verify when the customer is asked what they mean.
-        if policy.intent_of(turn, decision) is Intent.QUESTION and not policy.asks_back(
-            turn, decision
-        ):
+        if is_question and not policy.asks_back(turn, decision):
             with _timed(timings, "verify"):
                 checks = check_sections(turn.query, turn.hits, self.judge, general=general)
         response = policy.after_llm(turn, decision, verified(checks))

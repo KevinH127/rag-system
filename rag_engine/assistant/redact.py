@@ -1,3 +1,7 @@
+"""Remove secrets (card numbers, one-time codes, passwords) from customer messages before
+anything else sees them.
+"""
+
 import re
 from dataclasses import dataclass
 

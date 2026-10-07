@@ -20,6 +20,9 @@ SECRET_WARNING = (
     "ticket."
 )
 
+# Sent when a message was nothing but a secret, which was removed.
+ASK_AGAIN = "What can I help you with?"
+
 _HELP_WITH = (
     "I can help with anything about Trevona ACO: fees, profiles, retailers, drops and support "
     "tickets."
@@ -32,13 +35,11 @@ OFF_TOPIC = (
 
 # Pleasantries (vocabulary.small_talk) get a friendly reply that steers back to Trevona.
 SMALL_TALK = {
-    "greeting": f"Hi! {_HELP_WITH} What can I help you with?",
-    "how_are_you": f"I'm doing well, thanks for asking! {_HELP_WITH} What can I help you with?",
+    "greeting": f"Hi! {_HELP_WITH} {ASK_AGAIN}",
+    "how_are_you": f"I'm doing well, thanks for asking! {_HELP_WITH} {ASK_AGAIN}",
     "thanks": "You're welcome! Let me know if there's anything else I can help with.",
     "bye": "Thanks for reaching out, and have a great day!",
 }
-
-ASK_AGAIN = "What can I help you with?"
 
 # Sent for anything after a handoff: staff own the conversation from then on.
 CLOSED = (
