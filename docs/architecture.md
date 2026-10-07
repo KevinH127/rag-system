@@ -11,7 +11,8 @@ rag_engine/
   assistant/         deciding what to reply
     engine.py        one conversation: state + the per-message pipeline
     policy.py        business rules around the LLM (pure)
-    verify.py        only documented facts become an answer: judge quotes, grounding check (pure)
+    verify.py        which section answers: judge quotes checked against the text (pure)
+    grounding.py     whether the model's own wording says only what the docs say (pure)
     vocabulary.py    word normalisation, Trevona terms, retailers, products, small talk (pure)
     redact.py        secret detection (pure)
     replies.py       engine-owned customer texts (pure)
@@ -30,10 +31,11 @@ evals/
 - `knowledge/` never imports `assistant/`, `logbook/` or `interfaces/`.
 - `assistant/` never imports `logbook/` or `interfaces/`.
 - `logbook/` never imports `assistant/` or `interfaces/`; it stores the `TurnRecord` it is given.
-- The pure assistant modules (`policy`, `verify`, `vocabulary`, `redact`, `replies`, `prompt`) do
-  no I/O: no Ollama, no Postgres. All business rules are testable without services.
-- `Engine` receives its retriever, LLM, answer judge and recorder as injectable callables; tests
-  pass stubs. The default recorder does nothing; interfaces pass `logbook.store.recorder(channel)`.
+- The pure assistant modules (`policy`, `verify`, `grounding`, `vocabulary`, `redact`, `replies`,
+  `prompt`) do no I/O: no Ollama, no Postgres. All business rules are testable without services.
+- `Engine` receives its retriever, LLM, answer judge, summarizer and recorder as injectable
+  callables; tests pass stubs. The default recorder does nothing; interfaces pass
+  `logbook.store.recorder(channel)`.
 
 ## One message, end to end
 
@@ -67,7 +69,7 @@ Rules in `policy.after_llm`:
    is the fee?"), or that asks "in general", is answered for every retailer: sections tied to no
    retailer (the fee overview) are judged first (`policy.wants_general_answer`).
 3. **Only documented facts are ever an answer.** Only a question with a verified section is
-   answered. The reply is the model's own wording if `verify.grounded` passes: every amount,
+   answered. The reply is the model's own wording if `grounding.grounded` passes: every amount,
    number, link and channel is in the sections; each fee is said for the retailer and product the
    docs give it for, clause by clause; and it says yes or no the same way as the judge's quote.
    Otherwise the verified section is sent verbatim (`Response.composed` records which).
@@ -91,7 +93,7 @@ Rules in `policy.after_llm`:
 | One structured LLM call per message, plus up to 3 short judge calls for questions | p95 7.5 s against a 10 s budget | Separate classify + answer calls |
 | Business rules in code, not the prompt | A 3B model mislabels actions and promises things it cannot do | Prompt-only guardrails |
 | Only questions with a verified section are answered | The model answered 14/14 undocumented questions, several with invented facts ("your card is encrypted") | Trusting the model's answer when retrieval looks relevant |
-| The model words the answer; `verify.grounded` checks it, the verbatim section is the fallback | Verbatim sections read like a pasted FAQ and could not combine sections ("every Pokémon Center fee", "in general"). The check caught the model's own drafts "The fee is $2.50 to $5 per item" (Walmart's fee as the general one) and "$25 CAD for pre-orders on Pokémon Center Canada" ($25 is the Elite Trainer Box fee only). The model's existing reply is reused, so no extra LLM call | Verbatim sections only; a separate rewrite call per answer (p95 was already 9.7 s); handing off when the wording fails (customers wait for staff on documented questions) |
+| The model words the answer; `grounding.grounded` checks it, the verbatim section is the fallback | Verbatim sections read like a pasted FAQ and could not combine sections ("every Pokémon Center fee", "in general"). The check caught the model's own drafts "The fee is $2.50 to $5 per item" (Walmart's fee as the general one) and "$25 CAD for pre-orders on Pokémon Center Canada" ($25 is the Elite Trainer Box fee only). The model's existing reply is reused, so no extra LLM call | Verbatim sections only; a separate rewrite call per answer (p95 was already 9.7 s); handing off when the wording fails (customers wait for staff on documented questions) |
 | No "which retailer?" question: answers that vary by retailer are summarised | Asked "in general", the bot asked the same question again; customers expect an answer, and staff for anything it cannot answer | A hard-coded clarifying question, asked once |
 | Sections about another retailer are never judged (heading, or text when the heading names none) | The judge accepted the Pokémon Center "other items" fee for "the ACO fee for Bandai drops", and the fee overview (every retailer but Bandai) for "bandai" | Trusting the judge's prompt rule about retailers |
 | Small talk answered in code, without the LLM | "how are you doing today?" was declined as off-topic | Letting the model chat freely |
@@ -129,16 +131,22 @@ question the docs do not cover, or p95 latency over 10 s. Per-case results go to
 `evals/results/latest.json`. The golden set quotes the private knowledge base, so only its format
 is committed (`golden.example.jsonl`, fields described in the README).
 
-## Known limits (measured on the golden set, 104 cases)
-- Answerable questions: 69/71 are answered with the right facts. The other two hand off: the judge
-  rejects the right section ("ACO fee for an Elite Trainer Box?"), or the model labels the message
-  a request ("I only want the Elite Trainer Boxes").
-- 1/5 undocumented questions gets a wrong-retailer answer: "How much is the ACO fee for Bandai
-  drops?" is answered with the Pokémon Center "other items" fee section. Nothing rejects a section
-  whose heading names a different retailer than the question does.
-- The model sometimes labels a question as a request ("What are the steps to cancel an order on
-  the Pokémon Center website?"); those still hand off safely.
-- p95 latency is 9.7 s against the 10 s budget, up from 7.5 s as the docs grew.
+## Known limits (measured on the golden set, 113 cases)
+- No hallucinated amounts, and no undocumented question answered. Intent is right on all 113.
+- 55 of 80 answers use the model's own wording; the other 25 failed the grounding check and were
+  sent as the doc section. Most of those 25 contained an invented or contradicting claim; a few
+  were correct but phrased the opposite way to the section ("Can I get a refund?" against "Do I
+  still pay?").
+- The grounding check works on words, so a reply that recombines doc words into a new claim can
+  pass ("check the current fee in the ACO Fees and Payment section of our Discord channel"). The
+  prompt forbids adding steps, places or reasons; the eval's `must_contain` and `must_not` checks
+  catch some of the rest.
+- Two answerable questions hand off: the model labels "I only want the Elite Trainer Boxes" a
+  request, and the judge rejects the right section for one ETB fee phrasing.
+- `must_contain` matches exact text, so a correct paraphrase can fail "answer facts" ("you don't
+  need Amazon Prime" for "not required"): 71/75.
+- p95 latency is 10.6 s against the 10 s budget: answers in the model's own words are longer, and
+  handoffs make the extra summary call.
 - The judge sometimes quotes a section's heading back instead of its text; that never counts, so a
   section needs a plain sentence that answers its heading, not only a list.
 
