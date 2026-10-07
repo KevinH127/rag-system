@@ -20,7 +20,7 @@ rag_engine/
     llm.py           the Ollama calls: decide(), quote_answer() and summarize()
   logbook/           turn logging: sessions, question_log, question_debug
     schema.sql, store.py
-  interfaces/        ways in: cli.py today, the Discord bot next
+  interfaces/        ways in: cli.py and discord_bot.py
 tests/               unit tests, no Ollama or Postgres; test_architecture.py checks the rules below
 evals/
   run_eval.py        golden-set eval against the real model and database
@@ -102,7 +102,8 @@ Rules in `policy.after_llm`:
 | Hybrid retrieval (vector + Postgres full-text, RRF) | Pure vector search missed exact terms such as "booster box" | Vector only |
 | Deterministic off-topic gate before the LLM | The model treated "write me a python script" as a request | Trusting the model's classification |
 | Distance thresholds only for off-topic, never for answerability | Measured: undocumented questions sit as close to the docs (0.12-0.40) as answerable ones | Distance as a relevance gate |
-| In-memory conversation history | Enough for CLI testing | Postgres-backed history (planned with Discord) |
+| In-memory conversation history | Tickets are short-lived; a bot restart only starts open tickets afresh, and every turn is logged, so history can be rebuilt from `question_log` if that becomes a problem | Postgres-backed history |
+| The Discord bot goes silent in a ticket once staff post or it hands off | Staff own the ticket from then on; the bot must never talk over them or answer the customer's replies to staff | Answering until the ticket closes |
 | Sessions group the logs; conversation state stays in memory | Every logged turn keeps its message and reply, so resuming can later be rebuilt from `question_log` without a schema change | Restoring state from Postgres now |
 | Debug traces in their own table, switchable with `LOG_DEBUG` | Bulky and internal; can be disabled or pruned without losing the question log | One wide log table |
 | Recorder injected into `Engine`; its failures never raise | A logging outage must not cost a customer their reply, and tests and evals run without Postgres | Engine writing to Postgres directly |
@@ -150,8 +151,13 @@ is committed (`golden.example.jsonl`, fields described in the README).
 - The judge sometimes quotes a section's heading back instead of its text; that never counts, so a
   section needs a plain sentence that answers its heading, not only a list.
 
-## Adding the Discord bot
-Create `interfaces/discord_bot.py`. Keep one `Engine` per Discord user or thread, created with
-`recorder=store.recorder("discord")`, call `engine.respond(text)`, and post `response.reply`. On a
-handoff, post `response.summary` into the staff ticket. No changes to `knowledge/` or
-`assistant/` should be needed.
+## Discord bot (`interfaces/discord_bot.py`)
+One `Engine` per ticket channel, created with `recorder=store.recorder("discord")`. The bot
+answers in every channel it can read; Discord permissions limit it to ticket channels. On a
+handoff it posts the reply, then the ticket summary with a ping for the staff role, and goes
+silent in that channel; a staff-role member posting in a ticket also silences it. The engine
+blocks on Ollama, so each call runs in a worker thread (`asyncio.to_thread`) and one lock per
+channel keeps a ticket's messages in order. If the engine fails, the customer gets
+`replies.UNAVAILABLE` and staff are pinged. `Tickets` and `messages_for` hold this logic without
+touching Discord, so they are unit-tested; `run` only wires them to the client. Nothing in
+`knowledge/` or `assistant/` changed for it.

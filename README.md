@@ -1,7 +1,7 @@
 # Trevona ACO RAG Engine
 
 Customer-service RAG engine: Ollama `llama3.2:3b` + `nomic-embed-text` v1.5, Postgres + pgvector.
-Terminal CLI today; a Discord bot will call the same `Engine` later.
+Customers reach it through a Discord bot in support tickets; a terminal CLI uses the same `Engine`.
 
 Requires Python 3.12+, Docker (for Postgres) and a running [Ollama](https://ollama.com) server.
 
@@ -25,7 +25,28 @@ rag ingest                                # embed knowledge_base/ (skips unchang
 ```bash
 rag ask "How much is the ACO fee for an Elite Trainer Box?" --debug
 rag chat                                  # interactive; ends on an empty line or a handoff
+rag discord                               # run the Discord bot (see below)
 ```
+
+## Discord bot
+The bot answers customers inside support tickets: one conversation per ticket channel. On a
+handoff it replies to the customer, then pings the staff role with a summary of what it could not
+answer. After that, or as soon as anyone with the staff role posts in the ticket, it stays silent
+there. It ignores other bots, so your ticket bot's messages are not answered.
+
+It answers in **every channel it can read**, so give it access to ticket channels only.
+
+1. In the [Discord Developer Portal](https://discord.com/developers/applications), create an
+   application, open **Bot**, switch on **Message Content Intent**, and copy the token.
+2. Put the token and your staff role's ID in `.env` (never in code or chat):
+   `DISCORD_TOKEN=...` and `DISCORD_STAFF_ROLE_ID=...` (with Developer Mode on in Discord,
+   right-click the role and choose Copy Role ID).
+3. Invite the bot (OAuth2 > URL Generator, scope `bot`, permissions View Channels, Send Messages
+   and Read Message History), then give it access to your ticket category or channels only.
+4. For the staff ping to notify anyone, make the staff role mentionable, or give the bot the
+   "Mention @everyone, @here, and All Roles" permission.
+5. Run `rag discord` with Ollama and Postgres running. Conversations live in memory, so a restart
+   starts every open ticket afresh; turns are still logged with channel `discord`.
 
 ## Logs
 Every message is logged to Postgres (`rag db init` creates the tables). One `rag chat` run is one
