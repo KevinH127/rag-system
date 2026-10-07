@@ -26,7 +26,6 @@ class Decision(BaseModel):
     intent: Intent
     action: Action
     reply: str = Field(min_length=1)
-    summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,11 +50,15 @@ class Response:
     intent: Intent
     action: Action
     reply: str
+    # On a handoff: what the customer asked that the bot did not answer, for the staff ticket.
     summary: str | None = None
     hits: list[Hit] = field(default_factory=list)
     redacted: tuple[str, ...] = ()
-    # The section an answer was taken from, verbatim.
+    # The section verified to answer the question.
     source: Hit | None = None
+    # The answer is the model's own wording, checked against the docs; False means the source
+    # section was sent verbatim.
+    composed: bool = False
 
 
 @dataclass(frozen=True)

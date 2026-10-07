@@ -14,21 +14,29 @@ REQUEST_HANDOFF = (
     "#make-a-ticket (or reply in the ticket you already have open) and include the details below."
 )
 
-CLARIFY_FALLBACK = (
-    "Could you tell me a bit more about what you need help with, "
-    "such as which retailer it is about?"
-)
-
 SECRET_WARNING = (
     "For your safety, please don't share passwords, one-time codes or card numbers here. "
     "I removed it from your message. If staff need a code, they will ask in your account login "
     "ticket."
 )
 
-OFF_TOPIC = (
-    "I can only help with questions about Trevona ACO, such as fees, profiles, retailers and "
-    "support tickets. Please only ask me about Trevona."
+_HELP_WITH = (
+    "I can help with anything about Trevona ACO: fees, profiles, retailers, drops and support "
+    "tickets."
 )
+
+OFF_TOPIC = (
+    "Sorry, I can only help with questions about Trevona ACO, such as fees, profiles, retailers, "
+    "drops and support tickets. Is there anything about Trevona I can help with?"
+)
+
+# Pleasantries (vocabulary.small_talk) get a friendly reply that steers back to Trevona.
+SMALL_TALK = {
+    "greeting": f"Hi! {_HELP_WITH} What can I help you with?",
+    "how_are_you": f"I'm doing well, thanks for asking! {_HELP_WITH} What can I help you with?",
+    "thanks": "You're welcome! Let me know if there's anything else I can help with.",
+    "bye": "Thanks for reaching out, and have a great day!",
+}
 
 ASK_AGAIN = "What can I help you with?"
 
@@ -36,9 +44,4 @@ ASK_AGAIN = "What can I help you with?"
 CLOSED = (
     "This conversation has been passed to a team member, so I can't continue it here. Please "
     "reply in your support ticket (or open one in #make-a-ticket)."
-)
-
-WHICH_RETAILER = (
-    "Which retailer is this about: Pokémon Center Canada, Walmart Canada, Amazon Canada or "
-    "Costco Canada?"
 )

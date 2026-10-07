@@ -8,8 +8,8 @@ from uuid import UUID, uuid4
 from rag_engine.assistant import llm, policy, replies
 from rag_engine.assistant.prompt import build_system
 from rag_engine.assistant.redact import drop_secret_clauses, redact
-from rag_engine.assistant.verify import Judge, answer_of, check_sections
-from rag_engine.assistant.vocabulary import only_names_subject, without_subjects
+from rag_engine.assistant.verify import Judge, check_sections, verified
+from rag_engine.assistant.vocabulary import is_follow_up, without_subjects
 from rag_engine.knowledge import retrieve
 from rag_engine.models import Action, Check, Decision, Hit, Intent, Response, Trace, TurnRecord
 
@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 Retriever = Callable[[str], list[Hit]]
 Decider = Callable[[str, list[dict[str, str]]], Decision]
+Summarizer = Callable[[list[str]], str | None]
 Recorder = Callable[[TurnRecord], None]
 
 
@@ -42,12 +43,15 @@ class Engine:
     """One customer conversation (session): its state, and the pipeline each message goes through.
 
     redact -> retrieve -> rules before the LLM -> LLM -> verify an answer in the docs
-    -> rules after the LLM -> update state -> record
+    -> rules after the LLM -> on a handoff, summarise what was not answered -> update state
+    -> record
     """
 
     retriever: Retriever = retrieve.search
     decider: Decider = llm.decide
     judge: Judge = llm.quote_answer
+    # Writes the ticket summary of a handoff from the messages the bot did not answer.
+    summarizer: Summarizer = llm.summarize
     # Receives every turn; interfaces pass a log store, tests and evals keep the no-op.
     recorder: Recorder = _no_record
     session_id: UUID = field(default_factory=uuid4)
@@ -57,7 +61,8 @@ class Engine:
     closed: bool = field(default=False, init=False)
     # User messages since the last resolved turn; retrieved together so follow-ups keep context.
     _pending: list[str] = field(default_factory=list, init=False, repr=False)
-    # The last resolved question without its retailer, re-asked by a bare "what about Costco?".
+    # The last resolved question without its retailer, re-asked by a bare follow-up ("what about
+    # Costco?", "in general").
     _topic: str = field(default="", init=False, repr=False)
     _turn: int = field(default=0, init=False, repr=False)
 
@@ -91,7 +96,8 @@ class Engine:
         return response
 
     def _respond(self, message: str) -> tuple[Response, Trace]:
-        if not self._pending and self._topic and only_names_subject(message):
+        follows_up = not self._pending and bool(self._topic) and is_follow_up(message)
+        if follows_up:
             self._pending.append(self._topic)
         self._pending.append(message)
         self.history.append({"role": "user", "content": message})
@@ -104,29 +110,41 @@ class Engine:
             query=query,
             hits=hits,
             clarify_count=self.clarify_count,
-            user_messages=tuple(m["content"] for m in self.history if m["role"] == "user"),
+            follows_up=follows_up,
         )
         decision, checks = None, ()
         response = policy.before_llm(turn)
         gated = response is not None
         if response is None:
             response, decision, checks = self._decide(turn, timings)
+        if response.action is Action.HANDOFF:
+            response = replace(response, summary=self._summarize(timings))
         self._remember(response)
         return response, Trace(query, turn.clarify_count, gated, decision, checks, timings)
 
     def _decide(
         self, turn: policy.Turn, timings: dict[str, int]
     ) -> tuple[Response, Decision, tuple[Check, ...]]:
+        general = policy.wants_general_answer(turn)
+        system = build_system(policy.prompt_sections(turn, general), turn.clarify_allowed)
         with _timed(timings, "decide"):
-            decision = self.decider(build_system(turn.hits, turn.clarify_allowed), self.history)
+            decision = self.decider(system, self.history)
         checks: list[Check] = []
-        intent = policy.intent_of(turn, decision)
-        # No answer is given while the retailer is unknown, so there is nothing to verify yet.
-        if intent is Intent.QUESTION and not policy.asks_which_retailer(turn):
+        # Nothing to verify when the customer is asked what they mean.
+        if policy.intent_of(turn, decision) is Intent.QUESTION and not policy.asks_back(
+            turn, decision
+        ):
             with _timed(timings, "verify"):
-                checks = check_sections(turn.query, turn.hits, self.judge)
-        response = policy.after_llm(turn, decision, answer_of(checks))
+                checks = check_sections(turn.query, turn.hits, self.judge, general=general)
+        response = policy.after_llm(turn, decision, verified(checks))
         return response, decision, tuple(checks)
+
+    def _summarize(self, timings: dict[str, int]) -> str:
+        """What the customer asked that was not answered: the messages since the last resolved
+        turn, never ones already answered. The messages themselves if no summary comes back."""
+        with _timed(timings, "summarize"):
+            summary = self.summarizer(list(self._pending))
+        return summary or " | ".join(self._pending)
 
     def _remember(self, response: Response) -> None:
         self.history.append({"role": "assistant", "content": response.reply})
@@ -137,7 +155,7 @@ class Engine:
         else:
             self.clarify_count = 0
             self.closed = response.action is Action.HANDOFF
-            asked = [m for m in self._pending if not only_names_subject(m)]
+            asked = [m for m in self._pending if not is_follow_up(m)]
             self._topic = without_subjects(" ".join(asked))
             self._pending.clear()
 
