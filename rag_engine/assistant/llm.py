@@ -47,8 +47,35 @@ _QUOTE_SYSTEM = (
     '- Set "verdict" to "passage_answers_question" if the passage answers the question. A "no", '
     '"not accepted", "closed" or "set later" answer still counts as answering it.\n'
     '- Set "verdict" to "answer_not_in_passage" if the passage is about something else, or about '
-    "a different retailer or item than the one asked about."
+    "a different retailer or item than the one asked about.\n"
+    '- For a "how much" question, the passage must give the amount or say when it is set; one '
+    "that only explains how fees work does not answer it."
 )
+
+
+_SUMMARY_SYSTEM = (
+    "You write ticket summaries for Trevona ACO support staff. The customer's messages below were "
+    "not answered by the support bot. In one or two short sentences, say what the customer is "
+    "asking or needs, with any details they gave (retailer, item, order, account). Write in the "
+    'third person ("Customer asks..."). Do not answer it, and do not add anything the customer '
+    "did not say. Reply with the summary only."
+)
+
+
+def summarize(messages: list[str]) -> str | None:
+    """A short ticket summary of the customer's unanswered messages, or None if the model gave
+    none."""
+    numbered = "\n".join(f"{i}. {m}" for i, m in enumerate(messages, start=1))
+    result = _client.chat(
+        model=settings.ollama_model,
+        messages=[
+            {"role": "system", "content": _SUMMARY_SYSTEM},
+            {"role": "user", "content": numbered},
+        ],
+        options={"temperature": 0, "num_predict": 100},
+        keep_alive="30m",
+    )
+    return result.message.content.strip().strip('"').strip() or None
 
 
 def quote_answer(question: str, passage: str) -> str | None:

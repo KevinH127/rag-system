@@ -26,6 +26,15 @@ def test_cut_off_quote_counts_as_no_answer(monkeypatch):
     assert llm.quote_answer("q", "passage") is None
 
 
+def test_summary_is_trimmed_and_an_empty_one_is_none(monkeypatch):
+    reply_with(monkeypatch, '  "Customer asks whether prepaid cards work."  ')
+    assert (
+        llm.summarize(["can I use a prepaid card?"]) == "Customer asks whether prepaid cards work."
+    )
+    reply_with(monkeypatch, "  ")
+    assert llm.summarize(["?"]) is None
+
+
 def test_quote_is_returned_only_for_an_answered_verdict(monkeypatch):
     reply_with(
         monkeypatch,
