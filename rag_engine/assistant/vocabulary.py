@@ -52,6 +52,7 @@ _DOMAIN = frozenset(
         dashboard discord shipment shipping address jig cutoff membership imap otp order account
         vault venn booster etb elite trainer bundle queue role payment card announcement team
         staff dm money pay paid transfer bot server channel delivery tracking refund cancel
+        work working problem issue broken error wrong stuck fail help
         """
     )
 )
@@ -75,6 +76,20 @@ def retailers(text: str) -> set[str]:
     return terms(text) & _RETAILERS
 
 
+# Products the docs give their own fee. Matched as phrases: "box" alone could be either box.
+_PRODUCTS = (
+    ("etb", re.compile(r"\betbs?\b|\belite trainer box")),
+    ("booster box", re.compile(r"\bbooster box")),
+    ("booster bundle", re.compile(r"\bbundle")),
+)
+
+
+def products(text: str) -> set[str]:
+    """The products a text names, as "etb", "booster box" or "booster bundle"."""
+    plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return {name for name, pattern in _PRODUCTS if pattern.search(plain)}
+
+
 def names_subject(text: str) -> bool:
     """True if the text names a retailer or product."""
     return bool(terms(text) & _SUBJECTS)
@@ -86,6 +101,52 @@ def only_names_subject(text: str) -> bool:
     return bool(words & _SUBJECTS) and words <= _SUBJECTS | _FILLERS
 
 
+# Words that widen a question to every retailer instead of naming one ("in general").
+_GENERAL = frozenset(
+    terms("general generally overall overview everything every all both particular")
+)
+
+
+def asks_in_general(text: str) -> bool:
+    """True if the text asks about every retailer rather than one ("for all of them")."""
+    return bool(terms(text) & _GENERAL)
+
+
+def is_follow_up(text: str) -> bool:
+    """True for a message that only narrows or widens the previous question and asks nothing new
+    ("what about Costco?", "in general", "for all of them")."""
+    words = terms(text)
+    return bool(words) and words <= _SUBJECTS | _FILLERS | _GENERAL | frozenset(terms("them any"))
+
+
 def without_subjects(text: str) -> str:
     """The text with retailer and product names removed, keeping what it asks."""
     return " ".join(w for w in text.split() if not (terms(w) and terms(w) <= _SUBJECTS | _FILLERS))
+
+
+# A message made only of these words asks nothing; it is a pleasantry.
+_PLEASANTRIES = frozenset(
+    terms(
+        """
+        hi hello hey yo sup good morning afternoon evening doing going today things thanks thank
+        thx ty cheers appreciate bye goodbye see ya cya have day night one great fine well ok okay
+        awesome nice cool lot
+        """
+    )
+)
+# First match wins: "hi, how are you?" is asked how it is doing, "hey thanks" is thanked.
+_SMALL_TALK = (
+    ("how_are_you", re.compile(r"\bhow (?:are|r) (?:you|u)\b|\bhow'?s it going\b")),
+    ("thanks", re.compile(r"\b(?:thanks?|thank you|thx|ty|cheers|appreciate)\b")),
+    ("bye", re.compile(r"\b(?:bye|goodbye|see ya|cya|have a (?:good|great) (?:one|day|night))\b")),
+    ("greeting", re.compile(r"\b(?:hi|hello|hey|yo|sup|good (?:morning|afternoon|evening))\b")),
+)
+
+
+def small_talk(text: str) -> str | None:
+    """The kind of pleasantry a message is ("greeting", "how_are_you", "thanks", "bye"), or None
+    if it asks anything."""
+    if not terms(text) <= _PLEASANTRIES:
+        return None
+    plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return next((kind for kind, pattern in _SMALL_TALK if pattern.search(plain)), None)

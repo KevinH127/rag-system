@@ -1,9 +1,12 @@
 import pytest
 
 from rag_engine.assistant.vocabulary import (
+    asks_in_general,
+    is_follow_up,
     mentions_trevona,
     names_subject,
     only_names_subject,
+    small_talk,
     terms,
     without_subjects,
 )
@@ -76,3 +79,46 @@ def test_subject_names_are_detected_and_removed():
     assert not names_subject("how much is the aco fee")
     assert without_subjects("how much is the aco fee walmart") == "how much is the aco fee"
     assert without_subjects("fee for Pokémon Center booster boxes?") == "fee for"
+
+
+@pytest.mark.parametrize(
+    "msg", ["in general", "for all of them", "what about Costco?", "not one in particular", "both"]
+)
+def test_message_that_only_narrows_or_widens_the_last_question_is_a_follow_up(msg):
+    assert is_follow_up(msg)
+
+
+@pytest.mark.parametrize("msg", ["how do I sign up in general?", "thanks", "the fee", ""])
+def test_message_that_asks_something_new_is_not_a_follow_up(msg):
+    assert not is_follow_up(msg)
+
+
+def test_asking_in_general():
+    assert asks_in_general("for all of them") and asks_in_general("in general")
+    assert not asks_in_general("for costco") and not asks_in_general("how much is the fee")
+
+
+@pytest.mark.parametrize(
+    ("msg", "kind"),
+    [
+        ("hi", "greeting"),
+        ("Hey there!", "greeting"),
+        ("good morning", "greeting"),
+        ("how are you doing today?", "how_are_you"),
+        ("hi, how's it going", "how_are_you"),
+        ("thanks!", "thanks"),
+        ("thank you so much", "thanks"),
+        ("ok cool, appreciate it", "thanks"),
+        ("bye", "bye"),
+        ("have a great day", "bye"),
+    ],
+)
+def test_pleasantries_are_small_talk(msg, kind):
+    assert small_talk(msg) == kind
+
+
+@pytest.mark.parametrize(
+    "msg", ["hi, how much is the aco fee?", "thanks, what about costco?", "ok", "in general", ""]
+)
+def test_a_message_that_asks_anything_is_not_small_talk(msg):
+    assert small_talk(msg) is None
