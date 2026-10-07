@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # it can be switched off on its own.
     log_questions: bool = True
     log_debug: bool = True
+
+    # Discord bot (`rag discord`). The token comes from the Discord Developer Portal; keep it in
+    # .env only. Members of the staff role are pinged on a handoff, and their messages in a
+    # ticket take it over from the bot.
+    discord_token: SecretStr | None = None
+    discord_staff_role_id: int | None = None
 
 
 # The one instance every module imports.

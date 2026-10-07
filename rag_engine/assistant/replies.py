@@ -41,6 +41,12 @@ SMALL_TALK = {
     "bye": "Thanks for reaching out, and have a great day!",
 }
 
+# Sent when the bot cannot reach its model or database (an interface catches the error).
+UNAVAILABLE = (
+    "Sorry, I'm having trouble answering right now, so I'll pass this to a team member. They "
+    "will reply here."
+)
+
 # Sent for anything after a handoff: staff own the conversation from then on.
 CLOSED = (
     "This conversation has been passed to a team member, so I can't continue it here. Please "

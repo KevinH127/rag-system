@@ -1,4 +1,4 @@
-"""The `rag` command line: ask, chat, ingest and db init."""
+"""The `rag` command line: ask, chat, discord, ingest and db init."""
 
 import time
 from collections.abc import Iterator
@@ -8,6 +8,7 @@ import psycopg
 import typer
 
 from rag_engine.assistant.engine import Engine
+from rag_engine.interfaces import discord_bot
 from rag_engine.knowledge import db, ingest
 from rag_engine.logbook import store
 from rag_engine.models import Action, Response
@@ -87,6 +88,12 @@ def ingest_cmd() -> None:
         f"added={r.added} updated={r.updated} unchanged={r.unchanged} "
         f"removed={r.removed} chunks_written={r.chunks}"
     )
+
+
+@app.command("discord")
+def discord_cmd() -> None:
+    """Run the Discord bot: answers in the ticket channels it can see (Ctrl+C to stop)."""
+    discord_bot.run()
 
 
 @db_app.command("init")
