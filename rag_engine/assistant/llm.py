@@ -1,3 +1,9 @@
+"""The Ollama calls: decide on a reply, judge whether a section answers, summarise a handoff.
+
+Every call runs at temperature 0. Output the model cuts off or garbles never raises: it reads as
+"hand off" or "no answer".
+"""
+
 from enum import StrEnum
 
 import ollama
@@ -8,29 +14,46 @@ from rag_engine.models import Action, Decision, Intent
 
 _client = ollama.Client(host=settings.ollama_host)
 
-# Used when the model's JSON is cut off or malformed: hand off rather than crash. The rules then
-# still answer from the docs if a section verifiably answers the question.
+# Used when the model's JSON is cut off or malformed. The rules still answer from the docs if a
+# section verifiably answers the question.
 _UNREADABLE = Decision(intent=Intent.QUESTION, action=Action.HANDOFF, reply="(unreadable)")
 
 
-def decide(system: str, history: list[dict[str, str]]) -> Decision:
-    """One structured chat call returning intent, action and reply."""
+def _chat(
+    system: str,
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int,
+    schema: type[BaseModel] | None = None,
+) -> str:
+    """One chat call; `schema` constrains the output to that model's JSON."""
     result = _client.chat(
         model=settings.ollama_model,
-        messages=[{"role": "system", "content": system}, *history],
-        format=Decision.model_json_schema(),
-        options={"temperature": 0, "num_predict": 300},
+        messages=[{"role": "system", "content": system}, *messages],
+        format=schema.model_json_schema() if schema else None,
+        options={"temperature": 0, "num_predict": max_tokens},
         keep_alive="30m",
     )
+    return result.message.content
+
+
+# --- Decide: intent, action and reply -------------------------------------------------------
+
+
+def decide(system: str, history: list[dict[str, str]]) -> Decision:
+    """The model's proposal for the latest message in `history` (see prompt.py)."""
+    content = _chat(system, history, max_tokens=300, schema=Decision)
     try:
-        return Decision.model_validate_json(result.message.content)
+        return Decision.model_validate_json(content)
     except ValidationError:
         return _UNREADABLE
 
 
+# --- Judge: does this section answer the question? ------------------------------------------
+
+
 class _Verdict(StrEnum):
-    # Named outcomes, not a yes/no: given `answers: bool`, a 3B model marked correct "No, that is
-    # not accepted" answers as false, reading the flag as "is the answer yes?".
+    # Named outcomes, not a yes/no flag, which a small model reads as "is the answer yes?".
     ANSWERED = "passage_answers_question"
     NOT_ANSWERED = "answer_not_in_passage"
 
@@ -53,6 +76,23 @@ _QUOTE_SYSTEM = (
 )
 
 
+def quote_answer(question: str, passage: str) -> str | None:
+    """The sentence of the passage that answers the question, or None."""
+    content = _chat(
+        _QUOTE_SYSTEM,
+        [{"role": "user", "content": f"QUESTION:\n{question}\n\nPASSAGE:\n{passage}"}],
+        max_tokens=250,  # room for a quoted list; output cut off mid-JSON reads as "no answer"
+        schema=_Quote,
+    )
+    try:
+        verdict = _Quote.model_validate_json(content)
+    except ValidationError:
+        return None
+    return verdict.quote if verdict.verdict is _Verdict.ANSWERED else None
+
+
+# --- Summarise a handoff for staff ----------------------------------------------------------
+
 _SUMMARY_SYSTEM = (
     "You write ticket summaries for Trevona ACO support staff. The customer's messages below were "
     "not answered by the support bot. In one or two short sentences, say what the customer is "
@@ -66,33 +106,5 @@ def summarize(messages: list[str]) -> str | None:
     """A short ticket summary of the customer's unanswered messages, or None if the model gave
     none."""
     numbered = "\n".join(f"{i}. {m}" for i, m in enumerate(messages, start=1))
-    result = _client.chat(
-        model=settings.ollama_model,
-        messages=[
-            {"role": "system", "content": _SUMMARY_SYSTEM},
-            {"role": "user", "content": numbered},
-        ],
-        options={"temperature": 0, "num_predict": 100},
-        keep_alive="30m",
-    )
-    return result.message.content.strip().strip('"').strip() or None
-
-
-def quote_answer(question: str, passage: str) -> str | None:
-    """The sentence of the passage that answers the question, or None."""
-    result = _client.chat(
-        model=settings.ollama_model,
-        messages=[
-            {"role": "system", "content": _QUOTE_SYSTEM},
-            {"role": "user", "content": f"QUESTION:\n{question}\n\nPASSAGE:\n{passage}"},
-        ],
-        format=_Quote.model_json_schema(),
-        # Room for a long quoted list; output cut off mid-JSON is treated as "no answer".
-        options={"temperature": 0, "num_predict": 250},
-        keep_alive="30m",
-    )
-    try:
-        verdict = _Quote.model_validate_json(result.message.content)
-    except ValidationError:
-        return None
-    return verdict.quote if verdict.verdict is _Verdict.ANSWERED else None
+    content = _chat(_SUMMARY_SYSTEM, [{"role": "user", "content": numbered}], max_tokens=100)
+    return content.strip().strip('"').strip() or None
