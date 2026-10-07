@@ -12,7 +12,10 @@ _OTP = re.compile(
     r"(?i)\b(otp|one[- ]time (?:pass)?code|passcode|verification code|security code|code)\b"
     r"([^\d\n]{0,25})(\d{4,8})(?!\d)"
 )
-_PASSWORD = re.compile(r"(?i)\b(password|passwd|pwd|pw)\b(\s*(?:is|was|:|=)\s*)(\S+)")
+# The value stops before trailing punctuation, so "my password is x, why..." keeps its question.
+_PASSWORD = re.compile(
+    r"(?i)\b(password|passwd|pwd|pw)\b(\s*(?:is|was|:|=)\s*)(\S+?)(?=[,.;!?]*(?:\s|$))"
+)
 
 
 @dataclass(frozen=True)

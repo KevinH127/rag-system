@@ -32,6 +32,12 @@ def test_plain_message_is_unchanged():
     assert redact(msg).text == msg and redact(msg).kinds == ()
 
 
+def test_password_followed_by_a_question_keeps_the_question():
+    r = redact("my password is hunter22, why did checkout fail?")
+    assert "hunter22" not in r.text
+    assert drop_secret_clauses(r.text) == "why did checkout fail?"
+
+
 def test_drop_secret_clauses_keeps_the_real_question():
     r = redact("my password is hunter2 and my otp is 482913, why did checkout fail?")
     assert drop_secret_clauses(r.text) == "why did checkout fail?"
