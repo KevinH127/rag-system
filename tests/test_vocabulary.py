@@ -5,7 +5,6 @@ from rag_engine.assistant.vocabulary import (
     is_follow_up,
     mentions_trevona,
     names_subject,
-    only_names_subject,
     small_talk,
     terms,
     without_subjects,
@@ -18,7 +17,6 @@ from rag_engine.assistant.vocabulary import (
         "What's the Bandai fee?",
         "my PROFILE is inactive",
         "Pokémon drop",
-        # Words that were meant to be domain terms but were silently missing before.
         "Can I just DM one of the team members?",
         "Can I just send you the money by e-transfer?",
     ],
@@ -46,34 +44,6 @@ def test_dm_alias_keeps_the_original_word():
     assert {"dm", "direct"} <= terms("can I DM you")
 
 
-@pytest.mark.parametrize(
-    "msg",
-    [
-        "what about for costco",
-        "and Amazon?",
-        "Costco?",
-        "what about Pokémon Centre then",
-        "ok what about booster boxes",
-    ],
-)
-def test_message_that_only_names_a_retailer_or_product(msg):
-    assert only_names_subject(msg)
-
-
-@pytest.mark.parametrize(
-    "msg",
-    [
-        "how do I sign up for costco?",
-        "How many orders can I place with one Costco membership?",
-        "what about that?",
-        "thanks",
-        "how much is the aco fee",
-    ],
-)
-def test_message_that_asks_something(msg):
-    assert not only_names_subject(msg)
-
-
 def test_subject_names_are_detected_and_removed():
     assert names_subject("How much is the ACO fee for an Elite Trainer Box?")
     assert not names_subject("how much is the aco fee")
@@ -82,13 +52,36 @@ def test_subject_names_are_detected_and_removed():
 
 
 @pytest.mark.parametrize(
-    "msg", ["in general", "for all of them", "what about Costco?", "not one in particular", "both"]
+    "msg",
+    [
+        "what about for costco",
+        "and Amazon?",
+        "Costco?",
+        "what about Pokémon Centre then",
+        "ok what about booster boxes",
+        "in general",
+        "for all of them",
+        "not one in particular",
+        "both",
+    ],
 )
 def test_message_that_only_narrows_or_widens_the_last_question_is_a_follow_up(msg):
     assert is_follow_up(msg)
 
 
-@pytest.mark.parametrize("msg", ["how do I sign up in general?", "thanks", "the fee", ""])
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "how do I sign up for costco?",
+        "How many orders can I place with one Costco membership?",
+        "how do I sign up in general?",
+        "what about that?",
+        "how much is the aco fee",
+        "thanks",
+        "the fee",
+        "",
+    ],
+)
 def test_message_that_asks_something_new_is_not_a_follow_up(msg):
     assert not is_follow_up(msg)
 
