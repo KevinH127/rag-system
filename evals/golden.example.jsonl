@@ -4,3 +4,4 @@
 {"id":"nm-example","message":"<a question the docs do not answer>","intent":"question","actions":["handoff","clarify"],"sources":[]}
 {"id":"req-example","message":"Cancel my order for me","intent":"request","actions":["clarify","handoff"],"sources":[]}
 {"id":"off-example","message":"What's the weather today?","intent":"off_topic","actions":["decline"],"sources":[]}
+{"id":"conv-example","history":["<an earlier message in the same conversation>"],"message":"<the follow-up being scored>","intent":"question","actions":["answer"],"sources":["04-"],"must_contain":["<text>"]}

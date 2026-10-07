@@ -1,6 +1,7 @@
 """Run the golden question set against the engine and report quality and latency.
 
 Usage: python evals/run_eval.py [--only PREFIX,PREFIX] [--limit N]
+A case's "history" messages are sent first, as earlier turns of the same conversation.
 Exits non-zero on any hallucinated amount / forbidden claim, any answer to an undocumented
 question, or p95 latency over budget.
 """
@@ -30,8 +31,12 @@ def _unsupported_amounts(reply: str, context: str) -> list[str]:
 
 
 def run_case(case: dict) -> dict:
+    engine = Engine()
+    # Earlier turns of a conversation; only the last message is scored and timed.
+    for earlier in case.get("history", []):
+        engine.respond(earlier)
     start = time.perf_counter()
-    r = Engine().respond(case["message"])
+    r = engine.respond(case["message"])
     elapsed = time.perf_counter() - start
 
     reply = r.reply.lower()
@@ -51,6 +56,7 @@ def run_case(case: dict) -> dict:
         "intent": r.intent.value,
         "action": r.action.value,
         "reply": r.reply,
+        "composed": r.composed,
         "seconds": round(elapsed, 2),
         "intent_ok": r.intent.value == case["intent"],
         "action_ok": r.action.value in case["actions"],
@@ -81,7 +87,8 @@ def main() -> int:
     if "--limit" in sys.argv:
         cases = cases[: int(sys.argv[sys.argv.index("--limit") + 1])]
 
-    Engine().respond("hello")  # warm the model; excluded from latency stats
+    # Warm the model; excluded from latency stats. A greeting would not call it.
+    Engine().respond("how do I sign up?")
     results = []
     for case in cases:
         res = run_case(case)
@@ -112,6 +119,11 @@ def main() -> int:
     with_heading = [r for r, c in zip(results, cases, strict=True) if c.get("headings")]
     print(f"section hit     : {sum(r['section_ok'] for r in with_heading)}/{len(with_heading)}")
     print(f"answer facts    : {sum(r['facts_ok'] for r in answered)}/{len(answered)}")
+    given = [r for r in results if r["action"] == "answer"]
+    print(
+        f"own wording     : {sum(r['composed'] for r in given)}/{len(given)} answers "
+        "(the rest sent the doc section verbatim)"
+    )
     print(f"hallucinations  : {len(hallucinated)}")
     print(f"answered undocumented : {len(wrongly_answered)}")
     print(
