@@ -1,3 +1,7 @@
+"""Hybrid search over the knowledge base: vector and keyword rankings fused with reciprocal
+rank fusion.
+"""
+
 import re
 
 from rag_engine.config import settings

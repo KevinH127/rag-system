@@ -1,3 +1,5 @@
+"""Split a Markdown document into one chunk per `##` section."""
+
 import re
 from dataclasses import dataclass
 

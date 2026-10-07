@@ -1,3 +1,7 @@
+"""Sync the Markdown knowledge base into Postgres: changed files are re-chunked and
+re-embedded, unchanged ones skipped, removed ones deleted.
+"""
+
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +27,7 @@ def ingest(root: Path | None = None) -> IngestReport:
     files = {str(p.relative_to(root)): p for p in sorted(root.rglob("*.md"))}
     report = IngestReport()
 
-    with db.connect() as conn:
+    with db.connect() as conn:  # one transaction: commits on exit
         known = dict(conn.execute("SELECT path, content_hash FROM documents").fetchall())
 
         for path in known.keys() - files.keys():
@@ -59,5 +63,4 @@ def ingest(root: Path | None = None) -> IngestReport:
                 report.updated += 1
             else:
                 report.added += 1
-        conn.commit()
     return report

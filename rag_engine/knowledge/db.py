@@ -1,3 +1,5 @@
+"""Postgres connections (with pgvector) and schema setup."""
+
 from pathlib import Path
 
 import psycopg

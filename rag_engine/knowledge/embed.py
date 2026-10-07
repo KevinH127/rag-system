@@ -1,3 +1,5 @@
+"""Embeddings from Ollama's nomic-embed-text, which expects a task prefix on every text."""
+
 import ollama
 
 from rag_engine.config import settings

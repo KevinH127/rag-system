@@ -1,3 +1,5 @@
+"""Settings, read from the environment or `.env` (see `.env.example`)."""
+
 from pathlib import Path
 
 from pydantic import Field
@@ -7,12 +9,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Services. The defaults match docker-compose.yml and a local `ollama serve`.
     database_url: str = "postgresql://rag:rag@localhost:5433/rag"
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"
+    # Changing it means re-ingesting; chunks.embedding in knowledge/schema.sql is 768-dimensional.
     embed_model: str = "nomic-embed-text"
+    # Markdown files under this directory (subfolders included) are the knowledge base.
     knowledge_base_dir: Path = Path("knowledge_base")
+
+    # Sections retrieved per message and shown to the model.
     top_k: int = Field(4, ge=1, le=20)
+    # Questions the bot may ask about one vague message before handing off to staff.
     max_clarify_turns: int = Field(2, ge=0, le=5)
 
     # How many of the closest sections are checked for a quotable answer (one LLM call each).
@@ -32,4 +40,5 @@ class Settings(BaseSettings):
     log_debug: bool = True
 
 
+# The one instance every module imports.
 settings = Settings()
