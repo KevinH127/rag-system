@@ -24,13 +24,16 @@ CREATE TABLE IF NOT EXISTS question_log (
     action         TEXT NOT NULL,
     reply          TEXT NOT NULL,
     summary        TEXT,                          -- ticket summary on handoff
-    source_path    TEXT,                          -- section an answer was taken from
+    source_path    TEXT,                          -- section verified to answer the question
     source_heading TEXT,
     latency_ms     INT NOT NULL,
     UNIQUE (session_id, turn)
 );
 
 CREATE INDEX IF NOT EXISTS question_log_created_idx ON question_log(created_at);
+
+-- True when an answer is the model's own wording; false when the section was sent verbatim.
+ALTER TABLE question_log ADD COLUMN IF NOT EXISTS composed BOOLEAN NOT NULL DEFAULT false;
 
 -- How each reply was reached. Internal and bulkier: can be disabled (LOG_DEBUG=false) or pruned.
 -- Sections are stored by path and heading, not chunk id: ingest re-creates chunks.

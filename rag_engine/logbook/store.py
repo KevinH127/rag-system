@@ -32,9 +32,9 @@ _END_SQL = "UPDATE sessions SET ended_at = now(), end_reason = %s WHERE id = %s"
 
 _QUESTION_SQL = """
 INSERT INTO question_log (session_id, turn, message, redacted, intent, action, reply, summary,
-                          source_path, source_heading, latency_ms)
+                          source_path, source_heading, composed, latency_ms)
 VALUES (%(session_id)s, %(turn)s, %(message)s, %(redacted)s, %(intent)s, %(action)s, %(reply)s,
-        %(summary)s, %(source_path)s, %(source_heading)s, %(latency_ms)s)
+        %(summary)s, %(source_path)s, %(source_heading)s, %(composed)s, %(latency_ms)s)
 RETURNING id
 """
 
@@ -67,6 +67,7 @@ def _question_row(r: TurnRecord) -> dict[str, Any]:
         "summary": response.summary,
         "source_path": source.path if source else None,
         "source_heading": source.heading if source else None,
+        "composed": response.composed,
         "latency_ms": r.latency_ms,
     }
 
