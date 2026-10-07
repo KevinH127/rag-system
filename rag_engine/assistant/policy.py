@@ -1,13 +1,14 @@
 """Business rules around the LLM call.
 
-The LLM proposes an intent and an action; these rules decide what the customer actually gets.
-Pure functions with no I/O and no conversation state, so every rule is unit-testable.
+The LLM proposes an intent, an action and a reply; these rules decide what the customer actually
+gets. Pure functions with no I/O and no conversation state, so every rule is unit-testable.
 """
 
 from dataclasses import dataclass
 
 from rag_engine.assistant import replies
-from rag_engine.assistant.verify import grounded, verbatim
+from rag_engine.assistant.grounding import grounded
+from rag_engine.assistant.verify import verbatim
 from rag_engine.assistant.vocabulary import (
     asks_in_general,
     mentions_trevona,
@@ -40,6 +41,9 @@ class Turn:
         return best_distance(self.hits)
 
 
+# --- Before the LLM -------------------------------------------------------------------------
+
+
 def before_llm(turn: Turn) -> Response | None:
     """Reply to pleasantries, and decline clearly unrelated messages, without calling the LLM, so
     it cannot be talked into helping. The distance gate is skipped mid-clarification, where short
@@ -53,10 +57,12 @@ def before_llm(turn: Turn) -> Response | None:
     return None
 
 
+# --- Reading the model's proposal -----------------------------------------------------------
+
+
 def intent_of(turn: Turn, decision: Decision) -> Intent:
-    """The LLM's intent, except an off-topic verdict too close to the docs to trust, and a bare
-    follow-up, which continues the question before it (measured: "what about costco?" after a
-    Walmart fee answer was labelled a request and handed to staff)."""
+    """The LLM's intent, except that an off-topic verdict too close to the docs is not trusted,
+    and a bare follow-up is always a question, as it continues the question before it."""
     if turn.follows_up:
         return Intent.QUESTION
     if decision.intent is Intent.OFF_TOPIC and turn.closest < settings.llm_off_topic_min_distance:
@@ -77,8 +83,7 @@ def varies_by_retailer(turn: Turn) -> bool:
 def wants_general_answer(turn: Turn) -> bool:
     """The answer should cover every retailer, not the closest one: the customer said so ("in
     general", "for all of them"), or named none while the answer varies by retailer. The bot
-    summarises rather than asking which retailer. Measured: the Walmart fee section was closer to
-    "how much is the aco fee in general" than the general overview was."""
+    summarises rather than asking which retailer."""
     if retailers(turn.query):
         return False
     return asks_in_general(turn.message) or varies_by_retailer(turn)
@@ -94,9 +99,9 @@ def prompt_sections(turn: Turn, general: bool) -> list[Hit]:
 
 def asks_back(turn: Turn, decision: Decision) -> bool:
     """The model asks the customer about a question too vague to look up ("it's not working").
-    Judged against such a message, the judge verified an unrelated section ("A decline can show
-    up twice in the team's reports"). The only question the bot ever asks: never for a request,
-    a bare follow-up, or an answer that varies by retailer (that is summarised instead)."""
+    The only question the bot ever asks, and then nothing is verified: judged against a vague
+    message, the judge accepts unrelated sections. Never for a request, a bare follow-up, or an
+    answer that varies by retailer (that is summarised instead)."""
     return (
         decision.action is Action.CLARIFY
         and "?" in decision.reply
@@ -105,6 +110,9 @@ def asks_back(turn: Turn, decision: Decision) -> bool:
         and not turn.follows_up
         and not wants_general_answer(turn)
     )
+
+
+# --- After the LLM --------------------------------------------------------------------------
 
 
 def after_llm(turn: Turn, decision: Decision, answer: Check | None) -> Response:
@@ -118,18 +126,17 @@ def after_llm(turn: Turn, decision: Decision, answer: Check | None) -> Response:
         return _decline(turn)
 
     if asks_back(turn, decision):
-        return Response(intent, Action.CLARIFY, decision.reply, None, turn.hits)
+        return Response(intent, Action.CLARIFY, decision.reply, hits=turn.hits)
 
     # Only a question the docs verifiably answer is answered, whatever else the model picked.
     # Requests are never answered: only staff can act on them.
     if intent is Intent.QUESTION and answer:
         return _answer(turn, decision, answer)
 
-    # A request, or a question the docs do not answer, goes straight to staff.
-    # Engine-owned text: the model must not promise actions the bot cannot perform. The engine
-    # adds the ticket summary of what was not answered.
+    # Everything else goes to staff, with engine-owned text: the model must not promise actions
+    # the bot cannot perform. The engine adds the ticket summary.
     reply = replies.REQUEST_HANDOFF if intent is Intent.REQUEST else replies.NO_ANSWER
-    return Response(intent, Action.HANDOFF, reply, None, turn.hits)
+    return Response(intent, Action.HANDOFF, reply, hits=turn.hits)
 
 
 def _answer(turn: Turn, decision: Decision, answer: Check) -> Response:
@@ -137,13 +144,11 @@ def _answer(turn: Turn, decision: Decision, answer: Check) -> Response:
     composed = decision.action is Action.ANSWER and grounded(
         decision.reply, answer, turn.hits, turn.query
     )
-    reply = decision.reply if composed else verbatim(answer.hit)
     return Response(
         Intent.QUESTION,
         Action.ANSWER,
-        reply,
-        None,
-        turn.hits,
+        decision.reply if composed else verbatim(answer.hit),
+        hits=turn.hits,
         source=answer.hit,
         composed=composed,
     )
@@ -153,4 +158,4 @@ def _decline(turn: Turn) -> Response:
     """Off-topic, or small talk, which gets a friendly reply instead."""
     kind = small_talk(turn.message)
     reply = replies.SMALL_TALK[kind] if kind else replies.OFF_TOPIC
-    return Response(Intent.OFF_TOPIC, Action.DECLINE, reply, None, turn.hits)
+    return Response(Intent.OFF_TOPIC, Action.DECLINE, reply, hits=turn.hits)

@@ -8,7 +8,15 @@ import pytest
 PKG = Path(__file__).resolve().parents[1] / "rag_engine"
 IO_LIBRARIES = {"ollama", "psycopg", "pgvector"}
 # Decide replies only; must stay free of I/O so the rules are testable without services.
-PURE_ASSISTANT_MODULES = ["policy", "verify", "vocabulary", "redact", "replies", "prompt"]
+PURE_ASSISTANT_MODULES = [
+    "policy",
+    "verify",
+    "grounding",
+    "vocabulary",
+    "redact",
+    "replies",
+    "prompt",
+]
 
 
 def imported_modules(path: Path) -> set[str]:
