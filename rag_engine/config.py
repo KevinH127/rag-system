@@ -1,88 +1,35 @@
-"""
-Centralised configuration for the RAG engine.
+from pathlib import Path
 
-All settings are read from environment variables (or a .env file).
-Any missing required variable raises a ValidationError at startup
-— not buried inside a query call at runtime.
-"""
-
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # DATABASE
-    database_url: str = Field(
-        ...,
-        description=(
-            "PostgreSQL connection string. Must use the psycopg driver. "
-            "Example: postgresql+psycopg://postgres:postgres@localhost:5432/ragdb"
-        ),
-    )
+    database_url: str = "postgresql://rag:rag@localhost:5433/rag"
+    ollama_host: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2:3b"
+    embed_model: str = "nomic-embed-text"
+    knowledge_base_dir: Path = Path("knowledge_base")
+    top_k: int = Field(4, ge=1, le=20)
+    max_clarify_turns: int = Field(2, ge=0, le=5)
 
-    # OLLAMA LLM
-    ollama_host: str = Field(
-        default="http://localhost:11434",
-        description="Base URL of the locally running Ollama daemon.",
-    )
-    ollama_model: str = Field(
-        default="llama3.2:3b",
-        description="Ollama model name to use for answer generation.",
-    )
+    # How many of the closest sections are checked for a quotable answer (one LLM call each).
+    verify_top_n: int = Field(3, ge=1, le=10)
 
-    # EMBEDDINGS
-    embed_model: str = Field(
-        default="BAAI/bge-small-en-v1.5",
-        description="FastEmbed model name. Must produce 384-dim vectors.",
-    )
+    # Cosine-distance thresholds for off-topic handling, tuned on evals/golden.jsonl (on-topic
+    # messages measured <= 0.39, unrelated ones >= 0.45). Distance only says a message is ABOUT
+    # the docs, never that the docs ANSWER it; answers are verified separately (verify.py).
+    # The LLM may only call a message off-topic if it is at least this far from the docs.
+    llm_off_topic_min_distance: float = Field(0.40, gt=0, le=1)
+    # This far away with no Trevona term in the message: declined without calling the LLM.
+    off_topic_min_distance: float = Field(0.44, gt=0, le=1)
 
-    # CHUNKING
-    chunk_size: int = Field(
-        default=600,
-        ge=100,
-        le=4000,
-        description="Maximum character length per document chunk.",
-    )
-    chunk_overlap: int = Field(
-        default=100,
-        ge=0,
-        description="Character overlap between consecutive chunks.",
-    )
-
-    # RETRIEVAL
-    retrieval_top_k: int = Field(
-        default=4,
-        ge=1,
-        le=20,
-        description="Number of chunks to retrieve per query.",
-    )
-    retrieval_min_score: float = Field(
-        default=0.35,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "Minimum cosine similarity score. Chunks below this threshold are "
-            "discarded; if none pass, the graceful fallback response is returned."
-        ),
-    )
-
-    @field_validator("chunk_overlap")
-    @classmethod
-    def overlap_less_than_size(cls, v: int, info) -> int:
-        chunk_size = info.data.get("chunk_size", 600)
-        if v >= chunk_size:
-            raise ValueError(
-                f"chunk_overlap ({v}) must be less than chunk_size ({chunk_size})"
-            )
-        return v
+    # Turn logging to Postgres (rag_engine/logbook). The debug trace is bulkier and internal, so
+    # it can be switched off on its own.
+    log_questions: bool = True
+    log_debug: bool = True
 
 
-# import this everywhere instead of re-instantiating.
 settings = Settings()
