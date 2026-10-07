@@ -11,12 +11,12 @@ rag_engine/
   assistant/         deciding what to reply
     engine.py        one conversation: state + the per-message pipeline
     policy.py        business rules around the LLM (pure)
-    verify.py        only documented, quote-checked text becomes an answer (pure)
-    vocabulary.py    word normalisation + Trevona domain terms (pure)
+    verify.py        only documented facts become an answer: judge quotes, grounding check (pure)
+    vocabulary.py    word normalisation, Trevona terms, retailers, products, small talk (pure)
     redact.py        secret detection (pure)
     replies.py       engine-owned customer texts (pure)
     prompt.py        system prompt (pure)
-    llm.py           the Ollama calls: decide() and quote_answer()
+    llm.py           the Ollama calls: decide(), quote_answer() and summarize()
   logbook/           turn logging: sessions, question_log, question_debug
     schema.sql, store.py
   interfaces/        ways in: cli.py today, the Discord bot next
@@ -40,14 +40,20 @@ evals/
 ```
 message
   -> redact            secrets removed; the rest of the message is still answered
-  -> query             this message + earlier unresolved ones; a bare "what about Costco?" after a
-                       resolved turn re-asks that turn's question with the retailer swapped
+  -> query             this message + earlier unresolved ones; a bare follow-up after a resolved
+                       turn ("what about Costco?", "in general") re-asks that turn's question
   -> retrieve          hybrid vector + keyword search over knowledge/ (top_k sections)
-  -> policy.before_llm far from the docs and no Trevona word: decline, no LLM call
-  -> llm.decide        one JSON call: intent (question/request/off_topic) + action + reply
+  -> policy.before_llm small talk gets a friendly reply; far from the docs with no Trevona word:
+                       decline. Neither calls the LLM
+  -> llm.decide        one JSON call: intent (question/request/off_topic) + action + the reply in
+                       the model's own words. When the answer should cover every retailer,
+                       sections tied to no retailer come first in its context
   -> verify            questions only: the judge must quote the sentence that answers it from
-                       one of the closest sections; the quote is checked against the text
+                       one of the closest sections; the quote is checked against the text.
+                       Sections about a retailer the question does not ask about are skipped
   -> policy.after_llm  rules decide the final reply (see below)
+  -> llm.summarize     handoffs only: a ticket summary of the messages not answered since the
+                       last resolved turn
   -> Engine            history, clarify counter, pending retrieval context updated; a handoff
                        closes the session
   -> record            TurnRecord (redacted message, reply, trace) handed to the recorder
@@ -55,16 +61,28 @@ message
 
 Rules in `policy.after_llm`:
 1. An off-topic verdict is only accepted far from the docs; otherwise it is treated as a question.
-2. A question naming no retailer, whose closest section is one retailer's answer while other close
-   sections answer it for other retailers ("how much is the fee?"), gets "which retailer?" instead
-   of a guess (`policy.asks_which_retailer`, within `max_clarify_turns`; the judge is skipped).
-3. **Only documented text is ever an answer**: a verified section is returned verbatim, and the
-   model's own written answer is never shown. Requests are never answered.
-4. No verified section: ask the model's clarifying question if it asked one (at most
-   `max_clarify_turns`), otherwise hand off to staff with a ticket summary.
-5. Handoff, off-topic and which-retailer texts come from `replies.py`, never from the model.
-6. Unreadable model output is treated as "hand off" / "no answer", never a crash.
-7. A handoff ends the conversation: `Engine.closed` is set, interfaces stop (`rag chat` exits), and
+   A bare follow-up is always a question, whatever the model labels it.
+2. The bot never asks which retailer. A question naming no retailer or product, whose closest
+   section answers it for one retailer while other close sections answer it for others ("how much
+   is the fee?"), or that asks "in general", is answered for every retailer: sections tied to no
+   retailer (the fee overview) are judged first (`policy.wants_general_answer`).
+3. **Only documented facts are ever an answer.** Only a question with a verified section is
+   answered. The reply is the model's own wording if `verify.grounded` passes: every amount,
+   number, link and channel is in the sections; each fee is said for the retailer and product the
+   docs give it for, clause by clause; and it says yes or no the same way as the judge's quote.
+   Otherwise the verified section is sent verbatim (`Response.composed` records which).
+   Requests are never answered.
+4. No verified section, or a request: hand off to staff. The ticket summary is written by a
+   separate short call that sees only the messages not answered since the last resolved turn, so
+   answered questions never reach the ticket; if it returns nothing, those messages are used as
+   written.
+5. The only question the bot asks is the model's own, for a question too vague to look up ("it's
+   not working"), at most `max_clarify_turns` times; then nothing is verified (`policy.asks_back`).
+   Never for a request, a bare follow-up, or an answer that varies by retailer. There are no
+   hard-coded clarifying questions.
+6. Handoff, off-topic and small-talk texts come from `replies.py`, never from the model.
+7. Unreadable model output is treated as "hand off" / "no answer", never a crash.
+8. A handoff ends the conversation: `Engine.closed` is set, interfaces stop (`rag chat` exits), and
    anything sent later gets `replies.CLOSED` without running the pipeline.
 
 ## Decision log
@@ -72,7 +90,11 @@ Rules in `policy.after_llm`:
 |---|---|---|
 | One structured LLM call per message, plus up to 3 short judge calls for questions | p95 7.5 s against a 10 s budget | Separate classify + answer calls |
 | Business rules in code, not the prompt | A 3B model mislabels actions and promises things it cannot do | Prompt-only guardrails |
-| Answers are verified, verbatim doc text | The model answered 14/14 undocumented questions, several with invented facts ("your card is encrypted") | Trusting the model's answer when retrieval looks relevant |
+| Only questions with a verified section are answered | The model answered 14/14 undocumented questions, several with invented facts ("your card is encrypted") | Trusting the model's answer when retrieval looks relevant |
+| The model words the answer; `verify.grounded` checks it, the verbatim section is the fallback | Verbatim sections read like a pasted FAQ and could not combine sections ("every Pokémon Center fee", "in general"). The check caught the model's own drafts "The fee is $2.50 to $5 per item" (Walmart's fee as the general one) and "$25 CAD for pre-orders on Pokémon Center Canada" ($25 is the Elite Trainer Box fee only). The model's existing reply is reused, so no extra LLM call | Verbatim sections only; a separate rewrite call per answer (p95 was already 9.7 s); handing off when the wording fails (customers wait for staff on documented questions) |
+| No "which retailer?" question: answers that vary by retailer are summarised | Asked "in general", the bot asked the same question again; customers expect an answer, and staff for anything it cannot answer | A hard-coded clarifying question, asked once |
+| Sections about another retailer are never judged (heading, or text when the heading names none) | The judge accepted the Pokémon Center "other items" fee for "the ACO fee for Bandai drops", and the fee overview (every retailer but Bandai) for "bandai" | Trusting the judge's prompt rule about retailers |
+| Small talk answered in code, without the LLM | "how are you doing today?" was declined as off-topic | Letting the model chat freely |
 | Judge quotes first, then gives a *named* verdict | With `answers: bool` the model marked correct "No, not accepted" answers false (22/40 recall); a named verdict reached 35/40 | Yes/no flag; a three-way verdict (no better); ordering candidates by heading similarity (worse) |
 | Word-overlap FAQ shortcut removed | Patched three times and still matched "same card" to the Vault/Venn answer | More word lists |
 | Hybrid retrieval (vector + Postgres full-text, RRF) | Pure vector search missed exact terms such as "booster box" | Vector only |
@@ -82,9 +104,11 @@ Rules in `policy.after_llm`:
 | Sessions group the logs; conversation state stays in memory | Every logged turn keeps its message and reply, so resuming can later be rebuilt from `question_log` without a schema change | Restoring state from Postgres now |
 | Debug traces in their own table, switchable with `LOG_DEBUG` | Bulky and internal; can be disabled or pruned without losing the question log | One wide log table |
 | Recorder injected into `Engine`; its failures never raise | A logging outage must not cost a customer their reply, and tests and evals run without Postgres | Engine writing to Postgres directly |
-| "Which retailer?" decided in code from section headings | The judge accepted the Walmart fee section for "how much is the aco fee" (any retailer's fee answers it); a section that applies to one retailer names it in its `##` heading (README, "Editing the knowledge base"). Measured on the golden set: no answerable case affected | Asking the judge or the prompt to spot missing retailers |
-| Follow-ups that only name a retailer ("what about Costco?") re-ask the last resolved question in code | Retrieval and the judge only saw "what about for costco" and answered with Costco's requirements. Asked to rewrite follow-ups into standalone questions, llama3.2:3b answered them instead (0/6 rewritten, several invented facts) | An LLM rewrite call per follow-up; always merging the previous question (breaks topic switches) |
+| Whether an answer varies by retailer is decided in code from section headings | The judge accepted the Walmart fee section for "how much is the aco fee" (any retailer's fee answers it); a section that applies to one retailer names it in its `##` heading (README, "Editing the knowledge base") | Asking the judge or the prompt to spot missing retailers |
+| Bare follow-ups ("what about Costco?", "in general") re-ask the last resolved question in code | Retrieval and the judge only saw "what about for costco" and answered with Costco's requirements. Asked to rewrite follow-ups into standalone questions, llama3.2:3b answered them instead (0/6 rewritten, several invented facts) | An LLM rewrite call per follow-up; always merging the previous question (breaks topic switches) |
 | A handoff closes the session | Staff own the conversation from then on, in a ticket | Starting a fresh session in the same chat |
+| Ticket summaries come from a separate call on handoff, given only the unanswered messages | The summary used to be written in the main call only when the model itself chose to hand off; otherwise every message of the session was joined, answered questions included. The main call no longer writes one, which offsets the extra call | Summarising in every main call (tokens on every message, and it sees answered questions) |
+| The model's own question about a vague message is asked, and nothing is verified | Support words ("not working") now reach the model; for "it's not working" the judge verified "A decline can show up twice in the team's reports" | Letting any verified section win over the model's question |
 | Logs store sections by path and heading, not chunk id | `rag ingest` deletes and re-creates chunks, which would break or cascade-delete history | Foreign keys into `chunks` |
 
 ## Logging (`logbook/`)
@@ -105,12 +129,18 @@ question the docs do not cover, or p95 latency over 10 s. Per-case results go to
 `evals/results/latest.json`. The golden set quotes the private knowledge base, so only its format
 is committed (`golden.example.jsonl`, fields described in the README).
 
-## Known limits (measured on the golden set, 79 cases)
-- Answerable questions: 39/40 get the right facts; occasional handoffs where the judge rejects the
-  right section.
-- 3/14 undocumented questions get a true but partial doc answer ("Is there a deadline to pay?" ->
-  "You pay after delivery"). These disappear when the docs gain the missing section, because the
-  real answer is then the closest one.
+## Known limits (measured on the golden set, 104 cases)
+- Answerable questions: 69/71 are answered with the right facts. The other two hand off: the judge
+  rejects the right section ("ACO fee for an Elite Trainer Box?"), or the model labels the message
+  a request ("I only want the Elite Trainer Boxes").
+- 1/5 undocumented questions gets a wrong-retailer answer: "How much is the ACO fee for Bandai
+  drops?" is answered with the Pokémon Center "other items" fee section. Nothing rejects a section
+  whose heading names a different retailer than the question does.
+- The model sometimes labels a question as a request ("What are the steps to cancel an order on
+  the Pokémon Center website?"); those still hand off safely.
+- p95 latency is 9.7 s against the 10 s budget, up from 7.5 s as the docs grew.
+- The judge sometimes quotes a section's heading back instead of its text; that never counts, so a
+  section needs a plain sentence that answers its heading, not only a list.
 
 ## Adding the Discord bot
 Create `interfaces/discord_bot.py`. Keep one `Engine` per Discord user or thread, created with

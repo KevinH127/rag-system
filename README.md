@@ -34,7 +34,7 @@ session; each `rag ask` is its own. `--debug` prints the session id.
 | Table | One row per | Holds |
 |---|---|---|
 | `sessions` | conversation | channel, started / last active, `ended_at` + `end_reason` (`handoff`) |
-| `question_log` | message | `session_id`, `turn`, redacted message, intent, action, reply, source section, latency |
+| `question_log` | message | `session_id`, `turn`, redacted message, intent, action, reply, source section, `composed` (answer in the model's words, or the section verbatim), latency |
 | `question_debug` | message (1:1) | retrieved sections, gate, the model's own proposal, judge checks, timings, settings |
 
 Only redacted text is stored. `LOG_DEBUG=false` drops the debug rows; `LOG_QUESTIONS=false` turns
@@ -55,6 +55,10 @@ SELECT message, count(*) FROM question_log
 WHERE intent = 'question' AND action = 'handoff'
 GROUP BY message ORDER BY count(*) DESC;
 
+-- Answers whose wording failed the check and were sent as the doc section
+SELECT message, reply, source_heading FROM question_log
+WHERE action = 'answer' AND NOT composed ORDER BY created_at DESC LIMIT 20;
+
 -- Why one reply was given
 SELECT d.query, d.gated, d.decision, d.checks, d.timings_ms
 FROM question_debug d JOIN question_log q ON q.id = d.question_id
@@ -73,10 +77,14 @@ rag_engine/
 ```
 
 Each message is redacted, retrieved for, gated, and sent through one structured LLM call.
-Retrieval is hybrid: vector and keyword rankings are fused with reciprocal rank fusion. Answers
-are never the model's own words: a judge must quote the sentence that answers the question from
-the docs, the quote is checked, and that section is returned verbatim. Anything the docs do not
-answer goes to staff with a ticket summary. Requests are never answered.
+Retrieval is hybrid: vector and keyword rankings are fused with reciprocal rank fusion. The bot
+answers like a search engine that knows the docs: in its own words, summarising across retailers
+when the answer differs by retailer, and never asking which retailer. But it only answers a
+question the docs verifiably answer: a judge must quote the sentence that answers it, and the
+quote is checked. The model's wording is then checked against the docs (amounts, links, which
+retailer and product each fee is for, yes or no); if anything does not match, the doc section is
+sent as written instead. Anything the docs do not answer, and every request, goes to staff with a
+ticket summary of what the customer asked that was not answered.
 
 See [docs/architecture.md](docs/architecture.md) for the dependency rules (enforced by
 `tests/test_architecture.py`), the pipeline step by step and the decision log.
@@ -87,7 +95,8 @@ See [docs/architecture.md](docs/architecture.md) for the dependency rules (enfor
 pytest                                    # unit tests, no Ollama or Postgres needed
 ruff check .
 python evals/run_eval.py                  # golden set: intent/action accuracy, retrieval,
-                                          # hallucinated amounts, latency (budget 10 s)
+                                          # hallucinated amounts, answers in the model's own
+                                          # words, latency (budget 10 s)
 ```
 
 The eval needs Ollama, Postgres and an ingested knowledge base. The real golden set quotes the
@@ -103,6 +112,7 @@ Each line is one case:
 |---|---|
 | `id` | Unique name; the prefix groups cases for `--only` (e.g. `--only nm-,off-`) |
 | `message` | What the customer writes |
+| `history` | Optional: earlier messages of the same conversation, sent first; only `message` is scored |
 | `intent` | Expected intent: `question`, `request` or `off_topic` |
 | `actions` | Acceptable actions: any of `answer`, `clarify`, `handoff`, `decline` |
 | `sources` | Doc filename prefixes that should be retrieved (`[]` when none should) |
@@ -116,7 +126,14 @@ Add 1-2 phrasings whenever you add documentation.
 ## Editing the knowledge base
 One chunk is made per `##` section, prefixed with the document's `#` title and the section
 heading so it reads on its own; sections over 1,500 characters are split on blank lines. Keep each
-`##` section about one topic and state facts plainly, since answers are returned verbatim. A
-section that applies to one retailer must name it in its heading (e.g. `## ACO fee at Costco`):
-that is how the bot knows to ask "which retailer?" instead of guessing. After editing run
-`rag ingest` (only changed files are re-embedded), then the eval.
+`##` section about one topic and state facts plainly: the bot's answers are checked against
+them, and a section is sent as written when the check fails. Start each section with a sentence
+that answers its heading: the judge has to quote one, and a section that is only a list is often
+skipped. A section that applies to one retailer must name it in its heading (e.g.
+`## ACO fee at Costco`), and every fee should name its retailer and product in the same clause:
+that is how the bot knows which fee belongs to which retailer when it summarises.
+
+The fee overview ("How much is the ACO fee in general?" in `04-fees-and-payment.md`) repeats every
+fee, so customers who name no retailer get a full summary. Update it whenever a fee changes.
+
+After editing run `rag ingest` (only changed files are re-embedded), then the eval.
