@@ -5,14 +5,17 @@ actions the bot cannot perform ("I'll create a ticket and email you").
 """
 
 NO_ANSWER = (
-    "I'm not able to answer that myself, so I'll pass it to a team member. "
-    "Please open or reply in a support ticket so they can help."
+    "I'm not able to answer that myself, so I've passed your question to the team. A team member "
+    "will reply here in this ticket."
 )
 
 REQUEST_HANDOFF = (
-    "I can't do that myself, so a team member needs to help. Please open a support ticket in "
-    "#make-a-ticket (or reply in the ticket you already have open) and include the details below."
+    "I can't do that myself, so I've passed it to the team. A team member will reply here in this "
+    "ticket; if they need anything else from you, they'll ask here."
 )
+
+# Sent for anything after a handoff: staff own the ticket from then on.
+CLOSED = "A team member is handling this ticket now and will reply here."
 
 SECRET_WARNING = (
     "For your safety, please don't share passwords, one-time codes or card numbers here. "
@@ -41,14 +44,9 @@ SMALL_TALK = {
     "bye": "Thanks for reaching out, and have a great day!",
 }
 
-# Sent when the bot cannot reach its model or database (an interface catches the error).
+# Sent when the bot cannot reach its model or database (the Discord bot catches the error and
+# pings staff).
 UNAVAILABLE = (
-    "Sorry, I'm having trouble answering right now, so I'll pass this to a team member. They "
-    "will reply here."
-)
-
-# Sent for anything after a handoff: staff own the conversation from then on.
-CLOSED = (
-    "This conversation has been passed to a team member, so I can't continue it here. Please "
-    "reply in your support ticket (or open one in #make-a-ticket)."
+    "Sorry, I'm having trouble answering right now, so I've passed this to the team. A team "
+    "member will reply here in this ticket."
 )
