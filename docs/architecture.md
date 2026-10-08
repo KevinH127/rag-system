@@ -102,7 +102,7 @@ Rules in `policy.after_llm`:
 | Hybrid retrieval (vector + Postgres full-text, RRF) | Pure vector search missed exact terms such as "booster box" | Vector only |
 | Deterministic off-topic gate before the LLM | The model treated "write me a python script" as a request | Trusting the model's classification |
 | Distance thresholds only for off-topic, never for answerability | Measured: undocumented questions sit as close to the docs (0.12-0.40) as answerable ones | Distance as a relevance gate |
-| In-memory conversation history | Tickets are short-lived; a bot restart only starts open tickets afresh, and every turn is logged, so history can be rebuilt from `question_log` if that becomes a problem | Postgres-backed history |
+| In-memory conversation history; after a restart the bot answers only in tickets opened since | Tickets are short-lived, and a restarted bot that resumed old tickets would have forgotten both their conversation and that staff had taken them over, and could reply over staff. Every turn is still logged | Postgres-backed history; rereading each ticket's Discord history on restart |
 | The Discord bot goes silent in a ticket once staff post or it hands off | Staff own the ticket from then on; the bot must never talk over them or answer the customer's replies to staff | Answering until the ticket closes |
 | Sessions group the logs; conversation state stays in memory | Every logged turn keeps its message and reply, so resuming can later be rebuilt from `question_log` without a schema change | Restoring state from Postgres now |
 | Debug traces in their own table, switchable with `LOG_DEBUG` | Bulky and internal; can be disabled or pruned without losing the question log | One wide log table |
@@ -159,5 +159,6 @@ silent in that channel; a staff-role member posting in a ticket also silences it
 blocks on Ollama, so each call runs in a worker thread (`asyncio.to_thread`) and one lock per
 channel keeps a ticket's messages in order. If the engine fails, the customer gets
 `replies.UNAVAILABLE` and staff are pinged. `Tickets` and `messages_for` hold this logic without
-touching Discord, so they are unit-tested; `run` only wires them to the client. Nothing in
+touching Discord, so they are unit-tested; `create_client` wires them to the client. It answers
+only in channels created after the bot started (see the decision log). Nothing in
 `knowledge/` or `assistant/` changed for it.

@@ -5,6 +5,9 @@ is one conversation (one Engine, logged under the channel name "discord"). After
 soon as a member of the staff role posts in a ticket, the bot stays silent there: staff own the
 ticket from then on.
 
+Conversations are kept in memory only, so the bot answers only in tickets opened after it
+started: after a restart, tickets it was in (or had left to staff) stay with staff.
+
 `Tickets` and `messages_for` hold the logic and need no Discord connection, so they are tested
 directly; `run` only wires them to Discord.
 """
@@ -13,6 +16,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import Callable
+from datetime import datetime
 
 import discord
 
@@ -93,8 +97,12 @@ def run() -> None:
     client.run(settings.discord_token.get_secret_value())
 
 
-def create_client(tickets: Tickets, staff_role_id: int | None) -> discord.Client:
-    """A Discord client that answers customers through `tickets`."""
+def create_client(
+    tickets: Tickets, staff_role_id: int | None, started_at: datetime | None = None
+) -> discord.Client:
+    """A Discord client that answers customers through `tickets`, in ticket channels created
+    after `started_at` (now, by default)."""
+    started_at = started_at or discord.utils.utcnow()
     intents = discord.Intents.default()
     intents.message_content = True  # also switch on "Message Content Intent" in the portal
     client = discord.Client(intents=intents)
@@ -111,6 +119,8 @@ def create_client(tickets: Tickets, staff_role_id: int | None) -> discord.Client
         if message.author.bot or message.guild is None or not message.content.strip():
             return  # other bots (the ticket bot included), DMs, attachment-only messages
         channel = message.channel
+        if channel.created_at < started_at:
+            return  # opened before this run: its conversation, if any, was lost with the last one
         async with locks[channel.id]:
             if _is_staff(message.author, staff_role_id):
                 tickets.hand_over(channel.id)

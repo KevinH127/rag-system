@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from helpers import section
@@ -77,9 +78,13 @@ def test_long_replies_are_split_at_word_breaks_to_fit_discord():
 # --- The Discord client, driven with fake messages -----------------------------------------
 
 
+STARTED = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
+
+
 class FakeChannel:
-    def __init__(self, channel_id=1):
+    def __init__(self, channel_id=1, created_at=STARTED + timedelta(minutes=5)):
         self.id = channel_id
+        self.created_at = created_at
         self.sent = []
 
     @asynccontextmanager
@@ -105,14 +110,18 @@ def deliver(client, *messages):
 
 def test_a_customer_message_is_answered_in_its_ticket():
     channel = FakeChannel()
-    client = create_client(Tickets(lambda: engine_that(Action.ANSWER)), staff_role_id=42)
+    client = create_client(
+        Tickets(lambda: engine_that(Action.ANSWER)), staff_role_id=42, started_at=STARTED
+    )
     deliver(client, message("fee?", channel))
     assert channel.sent == ["The ACO fee is $25 CAD, paid after delivery."]
 
 
 def test_bots_are_ignored_and_staff_messages_silence_the_ticket():
     channel = FakeChannel()
-    client = create_client(Tickets(lambda: engine_that(Action.ANSWER)), staff_role_id=42)
+    client = create_client(
+        Tickets(lambda: engine_that(Action.ANSWER)), staff_role_id=42, started_at=STARTED
+    )
     deliver(
         client,
         message("Welcome to your ticket!", channel, bot=True),
@@ -124,7 +133,9 @@ def test_bots_are_ignored_and_staff_messages_silence_the_ticket():
 
 def test_a_handoff_posts_the_reply_then_pings_staff():
     channel = FakeChannel()
-    client = create_client(Tickets(lambda: engine_that(Action.HANDOFF)), staff_role_id=42)
+    client = create_client(
+        Tickets(lambda: engine_that(Action.HANDOFF)), staff_role_id=42, started_at=STARTED
+    )
     deliver(client, message("can I use a prepaid card?", channel), message("hello?", channel))
     assert channel.sent == [replies.NO_ANSWER, "<@&42> **Ticket summary:** Asks something."]
 
@@ -135,7 +146,16 @@ def test_when_the_engine_fails_staff_take_over_without_seeing_secrets():
 
     engine = Engine(retriever=broken, decider=broken, judge=broken, summarizer=broken)
     channel = FakeChannel()
-    client = create_client(Tickets(lambda: engine), staff_role_id=42)
+    client = create_client(Tickets(lambda: engine), staff_role_id=42, started_at=STARTED)
     deliver(client, message("my password is hunter22, why did checkout fail?", channel))
     assert channel.sent[0] == replies.UNAVAILABLE
     assert channel.sent[1].startswith("<@&42>") and "hunter22" not in channel.sent[1]
+
+
+def test_tickets_opened_before_the_bot_started_are_left_to_staff():
+    old_ticket = FakeChannel(created_at=STARTED - timedelta(hours=1))
+    client = create_client(
+        Tickets(lambda: engine_that(Action.ANSWER)), staff_role_id=42, started_at=STARTED
+    )
+    deliver(client, message("fee?", old_ticket))
+    assert old_ticket.sent == []

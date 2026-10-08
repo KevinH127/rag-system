@@ -45,8 +45,11 @@ It answers in **every channel it can read**, so give it access to ticket channel
    and Read Message History), then give it access to your ticket category or channels only.
 4. For the staff ping to notify anyone, make the staff role mentionable, or give the bot the
    "Mention @everyone, @here, and All Roles" permission.
-5. Run `rag discord` with Ollama and Postgres running. Conversations live in memory, so a restart
-   starts every open ticket afresh; turns are still logged with channel `discord`.
+5. Run `rag discord` with Ollama and Postgres running.
+
+The bot keeps each ticket's conversation in memory only, so it answers only in tickets opened
+after it started. After a restart, tickets that were already open stay with staff, and every new
+ticket gets the bot as usual. All turns are logged with channel `discord`.
 
 ## Logs
 Every message is logged to Postgres (`rag db init` creates the tables). One `rag chat` run is one
